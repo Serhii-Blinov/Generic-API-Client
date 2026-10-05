@@ -11,25 +11,37 @@ import Foundation
 class AsynchronousOperation: Operation {
     
     enum State {
-        case ready, executing, finished, cancelled
+        case ready, executing, finished
         fileprivate var keyPath: String {
             switch self {
-            case .ready: return #keyPath(Operation.isReady)
-            case .executing: return #keyPath(Operation.isExecuting)
-            case .finished: return #keyPath(Operation.isFinished)
-            case .cancelled: return #keyPath(Operation.isCancelled)
+            case .ready: return "isReady"
+            case .executing: return "isExecuting"
+            case .finished: return "isFinished"
             }
         }
     }
     
-    var state = State.ready {
-        willSet {
-            willChangeValue(forKey: newValue.keyPath)
-            willChangeValue(forKey: state.keyPath)
+    private let stateLock = NSLock()
+    private var _state = State.ready
+    
+    private(set) var state: State {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _state
         }
-        didSet {
-            didChangeValue(forKey: state.keyPath)
-            didChangeValue(forKey: oldValue.keyPath)
+        set {
+            let currentState = state
+            // A finished operation must never leave the finished state.
+            guard currentState != newValue, currentState != .finished else { return }
+            
+            willChangeValue(forKey: newValue.keyPath)
+            willChangeValue(forKey: currentState.keyPath)
+            stateLock.lock()
+            _state = newValue
+            stateLock.unlock()
+            didChangeValue(forKey: currentState.keyPath)
+            didChangeValue(forKey: newValue.keyPath)
         }
     }
 
@@ -50,11 +62,17 @@ class AsynchronousOperation: Operation {
     }
     
     override func start() {
-        if isCancelled {
-            state = .cancelled
-        } else {
-            main()
-            state = .executing
+        guard !isCancelled else {
+            finish()
+            return
         }
+        
+        state = .executing
+        main()
+    }
+    
+    /// Must be called by subclasses once their asynchronous work is done.
+    func finish() {
+        state = .finished
     }
 }

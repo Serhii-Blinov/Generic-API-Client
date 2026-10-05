@@ -8,8 +8,11 @@
 
 import Foundation
 
+/// Use as `Response` for endpoints that return no body (e.g. 204 No Content).
+struct EmptyResponse: Codable {}
+
 protocol EndPoint {
-    associatedtype Response: Codable
+    associatedtype Response: Decodable
     
     var additionalHeaders: [String: String]? { get }
     var httpBody: Data? { get }

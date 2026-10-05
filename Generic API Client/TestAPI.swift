@@ -36,9 +36,8 @@ class TestClient: APIClient {
         return components
     }()
     
-    var session: URLSession {
-        return URLSession.shared
-    }
+    // Own session, so cancelAllTasks() does not cancel requests made elsewhere in the app.
+    let session = URLSession(configuration: .default)
     
     init(host: String = "www.codetalk.de",
          scheme: String = "http",
@@ -46,6 +45,10 @@ class TestClient: APIClient {
         self.host = host
         self.scheme = scheme
         self.operationQueue = queue
+    }
+    
+    deinit {
+        session.finishTasksAndInvalidate()
     }
     
     func queueRequest<T:EndPoint>(for endpoint: T, completion: @escaping (APIResult<T>) -> Void) -> Operation {

@@ -20,7 +20,8 @@ protocol APIClient {
     func buildRequest<T:EndPoint>(for resource: T) -> URLRequest?
     func buildUrl<T:EndPoint>(for resource: T) -> URL?
     func cancelAllTasks()
-    func sendRequest<T:EndPoint>(for resource: T, completion: @escaping (APIResult<T>) -> Void)
+    @discardableResult
+    func sendRequest<T:EndPoint>(for resource: T, completion: @escaping (APIResult<T>) -> Void) -> URLSessionTask?
 }
 
 extension APIClient {
@@ -32,7 +33,7 @@ extension APIClient {
         }
         
         var request = URLRequest(url: url)
-        request.httpMethod = resource.httpMethod.rawValue
+        request.httpMethod = resource.httpMethod.name
         request.httpBody = resource.httpBody
         
         resource.additionalHeaders?.forEach { key, value in
@@ -57,16 +58,18 @@ extension APIClient {
         return components.url
     }
     
+    /// Cancels every task of `session`, so the client should own its session instead of using `URLSession.shared`.
     func cancelAllTasks() {
         session.getAllTasks { tasks in
             tasks.forEach { $0.cancel() }
         }
     }
     
-    func sendRequest<T:EndPoint>(for resource: T, completion: @escaping (APIResult<T>) -> Void) {
+    @discardableResult
+    func sendRequest<T:EndPoint>(for resource: T, completion: @escaping (APIResult<T>) -> Void) -> URLSessionTask? {
         guard let request = buildRequest(for: resource) else {
             completion(.failure(error: APIError.client))
-            return
+            return nil
         }
         
         // TODO: add log
@@ -79,19 +82,35 @@ extension APIClient {
                 completion(.failure(error: localizedError))
             }
             
+            if let error = error {
+                if let urlError = error as? URLError, urlError.code == .cancelled {
+                    failWithError(APIError.cancelled)
+                } else {
+                    failWithError(APIError.transport(error: error))
+                }
+                return
+            }
+            
             guard let httpResponse = response as? HTTPURLResponse else {
                 failWithError(APIError.unrecognizedFormat)
                 return
             }
             
             let statusCode = httpResponse.statusCode
-            guard statusCode == 200 else {
+            guard (200..<300).contains(statusCode) else {
                 let localizedDescription = resource.localizedErrorDescription(forStatusCode: APIError.HttpStatusCode(statusCode: statusCode))
                 failWithError(APIError.network(statusCode: statusCode, localizedDescription: localizedDescription))
                 return
             }
             
-            guard let data = data else {
+            let data = data ?? Data()
+            
+            if data.isEmpty, let emptyResponse = EmptyResponse() as? T.Response {
+                completion(.success(result: emptyResponse))
+                return
+            }
+            
+            guard !data.isEmpty else {
                 failWithError(APIError.noData)
                 return
             }
@@ -100,10 +119,10 @@ extension APIClient {
                 completion(.success(result: try JSONDecoder().decode(T.Response.self, from: data)))
             } catch let error as NSError {
                 failWithError(APIError.decoding(reason: error.userInfo))
-                return
             }
         }
         
         task.resume()
+        return task
     }
 }

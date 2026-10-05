@@ -9,10 +9,12 @@
 import Foundation
 
 enum APIError: Error {
+    case cancelled
     case client
     case decoding(reason: [String: Any]?)
     case network(statusCode: Int, localizedDescription: String?)
     case noData
+    case transport(error: Error)
     case unrecognizedFormat
 }
 
@@ -39,6 +41,9 @@ extension APIError: LocalizedError {
             switch HttpStatusCode(statusCode: statusCode) {
             default: return nil
             }
+            
+        case .transport(let error):
+            return error.localizedDescription
             
         default: return nil
         }

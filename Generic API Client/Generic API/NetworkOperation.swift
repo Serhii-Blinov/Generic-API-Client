@@ -8,10 +8,14 @@
 
 import Foundation
 
+/// The completion is delivered on the main thread and is not called if the operation was cancelled.
 class NetworkOperation<T:EndPoint>: AsynchronousOperation {
     private let completion: (APIResult<T>) -> Void
     private let client: APIClient
     private let endpoint: T
+    
+    private let taskLock = NSLock()
+    private var task: URLSessionTask?
     
     init(client: APIClient, endpoint: T, completion: @escaping (APIResult<T>) -> Void) {
         self.completion = completion
@@ -21,9 +25,32 @@ class NetworkOperation<T:EndPoint>: AsynchronousOperation {
     }
     
     override func main() {
-        client.sendRequest(for: endpoint) { result in
-            Thread.isMainThread ? self.completion(result) : DispatchQueue.main.async { self.completion(result) }
-            self.state = .finished
+        let task = client.sendRequest(for: endpoint) { result in
+            let deliver = {
+                guard !self.isCancelled else { return }
+                self.completion(result)
+            }
+            Thread.isMainThread ? deliver() : DispatchQueue.main.async(execute: deliver)
+            self.finish()
         }
+        
+        taskLock.lock()
+        self.task = task
+        taskLock.unlock()
+        
+        // cancel() may have been called before the task was stored.
+        if isCancelled {
+            task?.cancel()
+        }
+    }
+    
+    override func cancel() {
+        super.cancel()
+        
+        taskLock.lock()
+        let task = self.task
+        taskLock.unlock()
+        
+        task?.cancel()
     }
 }
